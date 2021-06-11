@@ -209,6 +209,8 @@ cvar_t sv_rehlds_local_gametime = {"sv_rehlds_local_gametime", "0", 0, 0.0f, nul
 cvar_t sv_rehlds_send_mapcycle = { "sv_rehlds_send_mapcycle", "0", 0, 0.0f, nullptr };
 cvar_t sv_rehlds_maxclients_from_single_ip = { "sv_rehlds_maxclients_from_single_ip", "5", 0, 5.0f, nullptr };
 cvar_t sv_use_entity_file = { "sv_use_entity_file", "0", 0, 0.0f, nullptr };
+cvar_t sv_clockwindow_reset = { "sv_clockwindow_reset", "1", 0, 1.0f, nullptr };
+cvar_t sv_clockwindow_push = { "sv_clockwindow_push", "1", 0, 1.0f, nullptr };
 #endif
 
 delta_t *SV_LookupDelta(char *name)
@@ -4614,7 +4616,7 @@ void SV_WriteEntitiesToClient(client_t *client, sizebuf_t *msg)
 	int e;
 	for (e = 1; e <= g_psvs.maxclients; e++)
 	{
-		client_t *cl = &g_psvs.clients[e - 1];
+		client_t* cl = &g_psvs.clients[e - 1];
 		if ((!cl->active && !cl->spawned) || cl->proxy)
 			continue;
 
@@ -7685,9 +7687,13 @@ void SV_CheckCmdTimes(void)
 
 	if (Host_IsSinglePlayerGame())
 		return;
-
+#ifdef REHLDS_FIXES
+	if (realtime - lastreset < sv_clockwindow_reset.value)
+		return;
+#else
 	if (realtime - lastreset < 1.0)
 		return;
+#endif
 
 	lastreset = realtime;
 	for (int i = g_psvs.maxclients - 1; i >= 0; i--)
@@ -7702,7 +7708,11 @@ void SV_CheckCmdTimes(void)
 		float dif = cl->connecttime + cl->cmdtime - realtime;
 		if (dif > clockwindow.value)
 		{
+#ifdef REHLDS_FIXES
+			cl->ignorecmdtime = sv_clockwindow_push.value + realtime;
+#else
 			cl->ignorecmdtime = clockwindow.value + realtime;
+#endif
 			cl->cmdtime = realtime - cl->connecttime;
 		}
 
@@ -8016,6 +8026,14 @@ void SV_Init(void)
 	Cvar_RegisterVariable(&sv_rollspeed);
 	Cvar_RegisterVariable(&sv_rollangle);
 	Cvar_RegisterVariable(&sv_use_entity_file);
+
+	Cvar_RegisterVariable(&sv_clockwindow_reset);
+	Cvar_RegisterVariable(&sv_clockwindow_push);
+	Cvar_RegisterVariable(&sv_usercmd_untrusted);
+	Cvar_RegisterVariable(&sv_usercmd_holdaim);
+	Cvar_RegisterVariable(&sv_usercmd_maxprocess);
+	Cvar_RegisterVariable(&sv_usercmd_custom_random_seed);
+	Cvar_RegisterVariable(&sv_usercmd_maxlerpdelta);
 #endif
 
 	for (int i = 0; i < MAX_MODELS; i++)

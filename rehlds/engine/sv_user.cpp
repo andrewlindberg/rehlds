@@ -59,6 +59,13 @@ cvar_t sv_unlagpush = { "sv_unlagpush", "0.0", 0, 0.0f, NULL };
 cvar_t sv_unlagsamples = { "sv_unlagsamples", "1", 0, 0.0f, NULL };
 cvar_t mp_consistency = { "mp_consistency", "1", FCVAR_SERVER, 0.0f, NULL };
 cvar_t sv_voiceenable = { "sv_voiceenable", "1", FCVAR_SERVER | FCVAR_ARCHIVE, 0.0f, NULL };
+#ifdef REHLDS_FIXES
+cvar_t sv_usercmd_untrusted				= { "sv_usercmd_untrusted", "0", 0, 0.0f, NULL };
+cvar_t sv_usercmd_holdaim				= { "sv_usercmd_holdaim", "0", 0, 0.0f, NULL };
+cvar_t sv_usercmd_maxprocess			= { "sv_usercmd_maxprocess", "0", 0, 0.0f, NULL };
+cvar_t sv_usercmd_custom_random_seed	= { "sv_usercmd_custom_random_seed", "0", 0, 0.0f, NULL };
+cvar_t sv_usercmd_maxlerpdelta			= { "sv_usercmd_maxlerpdelta", "0", 0, 0.0f, NULL };
+#endif // REHLDS_FIXES
 
 clc_func_t sv_clcfuncs[] = {
 	{ clc_bad,             "clc_bad",             nullptr                      },
@@ -747,7 +754,7 @@ void SV_RunCmd(usercmd_t *ucmd, int random_seed)
 {
 	usercmd_t cmd = *ucmd;
 	int i;
-	edict_t *ent;
+	edict_t* ent;
 	trace_t trace;
 	float frametime;
 
@@ -773,7 +780,21 @@ void SV_RunCmd(usercmd_t *ucmd, int random_seed)
 	if (!host_client->fakeclient)
 		SV_SetupMove(host_client);
 
-	gEntityInterface.pfnCmdStart(sv_player, ucmd, random_seed);
+#ifdef REHLDS_FIXES
+	if (sv_usercmd_custom_random_seed.value)
+	{
+		int custom_random_seed = int(Sys_FloatTime() * 1000.0);
+
+		//Con_Printf("Client %s:%s replace random_seed %i / %i \n", host_client->name, NET_AdrToString(host_client->netchan.remote_address), random_seed, custom_random_seed);
+
+		gEntityInterface.pfnCmdStart(sv_player, ucmd, custom_random_seed);
+	}
+	else
+#endif
+	{
+		gEntityInterface.pfnCmdStart(sv_player, ucmd, random_seed);
+	}
+
 	frametime = float(ucmd->msec * 0.001);
 	host_client->svtimebase = frametime + host_client->svtimebase;
 	host_client->cmdtime = ucmd->msec / 1000.0 + host_client->cmdtime;
@@ -1551,10 +1572,11 @@ void SV_ParseMove(client_t *pSenderClient)
 	pSenderClient->m_bLoopback = (packetLossByte >> 7) & 1;
 	totalcmds = numcmds + numbackup;
 	net_drop += 1 - numcmds;
+
 	if (totalcmds < 0 || totalcmds >= CMD_MAXBACKUP - 1)
 	{
 		Con_Printf("SV_ReadClientMessage: too many cmds %i sent for %s/%s\n", totalcmds, host_client->name, NET_AdrToString(host_client->netchan.remote_address));
-		SV_DropClient(host_client, FALSE, "CMD_MAXBACKUP hit");
+		SV_DropClient(host_client, FALSE, "too many cmds %i", totalcmds);
 		msg_badread = 1;
 		return;
 	}
@@ -1589,6 +1611,31 @@ void SV_ParseMove(client_t *pSenderClient)
 		sv_player->v.v_angle[0] = cmds[0].viewangles[0];
 		sv_player->v.v_angle[1] = cmds[0].viewangles[1];
 		sv_player->v.v_angle[2] = cmds[0].viewangles[2];
+
+#ifdef REHLDS_FIXES
+		if (sv_usercmd_holdaim.value && numcmds > 1 && !sv_player->v.deadflag && sv_player->v.health > 0.f)
+		{
+			usercmd_t *hold_aim_cmd = nullptr;
+
+			for (int i = 0; i < numcmds; i++)
+			{
+				if (cmds[i].buttons & IN_ATTACK || cmds[i].buttons & IN_ATTACK2)
+				{
+					hold_aim_cmd = &cmds[i];
+					break;
+				}
+			}
+
+			if (hold_aim_cmd != nullptr)
+			{
+				Con_DPrintf("Client %s:%s hold aim (x %.3f y %.3f z %.3f) / (x %.3f y %.3f z %.3f)\n", host_client->name, NET_AdrToString(host_client->netchan.remote_address), hold_aim_cmd->viewangles[0], hold_aim_cmd->viewangles[1], hold_aim_cmd->viewangles[2], cmds[0].viewangles[0], cmds[0].viewangles[1], cmds[0].viewangles[2]);
+
+				cmds[0].viewangles[0] = hold_aim_cmd->viewangles[0];
+				cmds[0].viewangles[1] = hold_aim_cmd->viewangles[1];
+				cmds[0].viewangles[2] = hold_aim_cmd->viewangles[2];
+			}
+		}
+#endif // REHLDS_FIXES
 	}
 	else
 	{
@@ -1630,6 +1677,7 @@ void SV_ParseMove(client_t *pSenderClient)
 	sv_player->v.button = cmds[0].buttons;
 	sv_player->v.light_level = cmds[0].lightlevel;
 #endif
+
 	SV_EstablishTimeBase(host_client, cmds, net_drop, numbackup, numcmds);
 	if (net_drop < 24)
 	{
@@ -1647,10 +1695,36 @@ void SV_ParseMove(client_t *pSenderClient)
 
 	}
 
+#ifdef REHLDS_FIXES
+	if (sv_usercmd_maxlerpdelta.value)
+	{
+		int delta = abs(cmds[0].lerp_msec - host_client->lastcmd.lerp_msec);
+
+		if (delta >= (int)sv_usercmd_maxlerpdelta.value && host_client->lastcmd.lerp_msec != 0)
+		{
+			Con_DPrintf("Client %s:%s lerp delta %i (%i / %i)\n", host_client->name, NET_AdrToString(host_client->netchan.remote_address), delta, cmds[0].lerp_msec, host_client->lastcmd.lerp_msec);
+			host_client->ignorecmdtime = clockwindow.value + realtime;
+		}
+	}
+
+	int commands_to_run = numcmds;
+
+	if (sv_usercmd_maxprocess.value && commands_to_run > (int)sv_usercmd_maxprocess.value)
+	{
+		commands_to_run = (int)sv_usercmd_maxprocess.value;
+		Con_DPrintf("Client %s:%s process cmds %i clamped to %i\n", host_client->name, NET_AdrToString(host_client->netchan.remote_address), numcmds, commands_to_run);
+	}
+
+	for (int i = commands_to_run - 1; i >= 0; i--)
+	{
+		SV_RunCmd(&cmds[i], host_client->netchan.incoming_sequence - i);
+	}
+#else
 	for (int i = numcmds - 1; i >= 0; i--)
 	{
 		SV_RunCmd(&cmds[i], host_client->netchan.incoming_sequence - i);
 	}
+#endif
 
 #ifdef REHLDS_FIXES
 	if (numcmds)

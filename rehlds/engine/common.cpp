@@ -1137,6 +1137,19 @@ void MSG_ReadUsercmd(usercmd_t *to, usercmd_t* from)
 #endif
 	MSG_EndBitReading(&net_message);
 	COM_NormalizeAngles(to->viewangles);
+
+#ifdef REHLDS_FIXES
+	if (sv_usercmd_untrusted.value)
+	{
+		if (to->viewangles[0] > 89.f || to->viewangles[0] < -89.f)
+		{
+			SV_DropClient(host_client, FALSE, "x %.3f / y %.3f / z %.3f", to->viewangles[0], to->viewangles[1], to->viewangles[2]);
+		}
+
+		if (to->viewangles[2] > sv_rollangle.value || to->viewangles[2] < -sv_rollangle.value)
+			to->viewangles[2] = 0.f;
+	}
+#endif
 }
 
 #endif // MSG_Functions_region

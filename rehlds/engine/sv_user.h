@@ -73,6 +73,13 @@ extern cvar_t sv_unlagpush;
 extern cvar_t sv_unlagsamples;
 extern cvar_t mp_consistency;
 extern cvar_t sv_voiceenable;
+#ifdef REHLDS_FIXES
+extern cvar_t sv_usercmd_holdaim;
+extern cvar_t sv_usercmd_maxprocess;
+extern cvar_t sv_usercmd_custom_random_seed;
+extern cvar_t sv_usercmd_untrusted;
+extern cvar_t sv_usercmd_maxlerpdelta;
+#endif
 
 extern qboolean nofind;
 
